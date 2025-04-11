@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import hashlib
 import os
+import io
 from datetime import datetime
 import folium
 from folium.plugins import MarkerCluster, HeatMap
@@ -10,6 +11,7 @@ import random
 from sklearn.linear_model import LinearRegression
 from dateutil.relativedelta import relativedelta
 import sqlite3
+import requests
 
 # --- File Paths ---
 USERS_FILE = "users.csv"
@@ -17,12 +19,28 @@ CRIMES_FILE = "Crime_Data_from_2020_to_Present.csv"
 REPORT_FILE = "reports.csv"
 
 @st.cache_data
-def load_crime_data():
-    url = "https://drive.google.com/uc?id=1BzV1mVYq__H8cTieOY76Lvc3oWGL8HA_"
-    return pd.read_csv(url, nrows=10000)
+def load_crime_data(max_rows=150000):
+    endpoint = "https://data.lacity.org/resource/2nrs-mtv8.json"
+    limit = 50000
+    dfs = []
 
-# Use wherever needed
-crimes = load_crime_data()
+    for offset in range(0, max_rows, limit):
+        url = f"{endpoint}?$limit={limit}&$offset={offset}"
+        response = requests.get(url)
+        if response.status_code != 200:
+            break  # Exit on error or no more data
+        data = response.json()
+        if not data:
+            break
+        df = pd.DataFrame(data)
+        dfs.append(df)
+
+    if dfs:
+        full_df = pd.concat(dfs, ignore_index=True)
+        full_df.columns = full_df.columns.str.strip().str.upper()
+        return full_df
+    else:
+        return pd.DataFrame()
 
 # Utility: create tables if not exist
 def init_db():
@@ -114,21 +132,23 @@ def homepage():
     st.title(f"Crime Dashboard - Welcome {st.session_state.user}")
 
     crimes = load_crime_data()
-    crimes['DATE OCC'] = pd.to_datetime(crimes['DATE OCC'], errors='coerce')
-    crimes['Category'] = crimes['Crm Cd Desc'].apply(categorize_crime)
+    crimes["LAT"] = pd.to_numeric(crimes["LAT"], errors="coerce")
+    crimes["LON"] = pd.to_numeric(crimes["LON"], errors="coerce")
+    crimes['DATE_OCC'] = pd.to_datetime(crimes['DATE_OCC'], errors='coerce')
+    crimes['Category'] = crimes['CRM_CD_DESC'].apply(categorize_crime)
 
-    min_date = crimes['DATE OCC'].min().date() if not crimes.empty else datetime.today().date()
-    max_date = crimes['DATE OCC'].max().date() if not crimes.empty else datetime.today().date()
+    min_date = crimes['DATE_OCC'].min().date() if not crimes.empty else datetime.today().date()
+    max_date = crimes['DATE_OCC'].max().date() if not crimes.empty else datetime.today().date()
     col_filter1, col_filter2 = st.columns([2, 3])
     with col_filter1:
         date_range = st.date_input("Select Date Range", [min_date, max_date])
     with col_filter2:
-        selected_types = st.multiselect("Filter by Crime Type", crimes['Crm Cd Desc'].unique())
+        selected_types = st.multiselect("Filter by Crime Type", crimes['CRM_CD_DESC'].unique())
 
     filtered_crimes = crimes[
-        (crimes['DATE OCC'].dt.date >= date_range[0]) & 
-        (crimes['DATE OCC'].dt.date <= date_range[1]) &
-        (crimes['Crm Cd Desc'].isin(selected_types) if selected_types else True)
+        (crimes['DATE_OCC'].dt.date >= date_range[0]) & 
+        (crimes['DATE_OCC'].dt.date <= date_range[1]) &
+        (crimes['CRM_CD_DESC'].isin(selected_types) if selected_types else True)
     ] if len(date_range) == 2 else crimes
 
     col1, col2, col3, col4 = st.columns(4)
@@ -139,17 +159,17 @@ def homepage():
     with col3:
         st.metric("Property Crimes", len(filtered_crimes[filtered_crimes['Category'] == "Property Crimes"]))
     with col4:
-        clearance_rate = filtered_crimes['Status Desc'].str.contains('Arrest', na=False).mean() * 100
+        clearance_rate = filtered_crimes['STATUS_DESC'].str.contains('Arrest', na=False).mean() * 100
         st.metric("Arrest Rate", f"{clearance_rate:.1f}%")
 
     st.markdown("### Top 5 Reported Crime Types")
-    top_crimes = filtered_crimes['Crm Cd Desc'].value_counts().head(5)
-    st.table(top_crimes.reset_index().rename(columns={'index': 'Crime Type', 'Crm Cd Desc': 'Reports'}))
+    top_crimes = filtered_crimes['CRM_CD_DESC'].value_counts().head(5)
+    st.table(top_crimes.reset_index().rename(columns={'index': 'Crime Type', 'CRM_CD_DESC': 'Reports'}))
 
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("### Crimes by Day of Week")
-        day_counts = filtered_crimes['DATE OCC'].dt.day_name().value_counts().reindex([
+        day_counts = filtered_crimes['DATE_OCC'].dt.day_name().value_counts().reindex([
             "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"
         ])
         st.bar_chart(day_counts)
@@ -157,7 +177,7 @@ def homepage():
     with col2:
         st.markdown("### Crime Activity by Hour of Day")
         filtered_crimes['Hour'] = pd.to_numeric(
-    filtered_crimes['TIME OCC'].fillna(0).astype(int).astype(str).str.zfill(4).str[:2],
+    filtered_crimes['TIME_OCC'].fillna(0).astype(int).astype(str).str.zfill(4).str[:2],
     errors='coerce'
 ).fillna(0).astype(int)
         hour_counts = filtered_crimes['Hour'].value_counts().sort_index()
@@ -166,23 +186,23 @@ def homepage():
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("### Crime Type Distribution")
-        crime_types = filtered_crimes['Crm Cd Desc'].value_counts()
+        crime_types = filtered_crimes['CRM_CD_DESC'].value_counts()
         st.bar_chart(crime_types)
 
     with col2:
         st.markdown("### Monthly Crime Trend")
-        time_data = filtered_crimes.set_index('DATE OCC').resample('M').size().rename("count")
+        time_data = filtered_crimes.set_index('DATE_OCC').resample('M').size().rename("count")
         st.area_chart(time_data)
 
     col3, col4 = st.columns(2)
     with col3:
         st.markdown("### Violent Crimes Trend")
-        time_data_violent = filtered_crimes[filtered_crimes['Category'] == "Violent Crimes"].set_index('DATE OCC').resample('ME').size().rename("count")
+        time_data_violent = filtered_crimes[filtered_crimes['Category'] == "Violent Crimes"].set_index('DATE_OCC').resample('ME').size().rename("count")
         st.area_chart(time_data_violent)
 
     with col4:
         st.markdown("### Property Crimes Trend")
-        time_data_property = filtered_crimes[filtered_crimes['Category'] == "Property Crimes"].set_index('DATE OCC').resample('ME').size().rename("count")
+        time_data_property = filtered_crimes[filtered_crimes['Category'] == "Property Crimes"].set_index('DATE_OCC').resample('ME').size().rename("count")
         st.area_chart(time_data_property)
 
     with st.expander("📢 Community Safety Tips"):
@@ -262,23 +282,25 @@ def report_page():
 def map_view_page():
     st.header("Interactive Crime Map")
     crimes = load_crime_data().dropna(subset=['LAT', 'LON'])
-    crimes['DATE OCC'] = pd.to_datetime(crimes['DATE OCC'], errors='coerce')
-    crimes = crimes.dropna(subset=['DATE OCC'])
+    crimes["LAT"] = pd.to_numeric(crimes["LAT"], errors="coerce")
+    crimes["LON"] = pd.to_numeric(crimes["LON"], errors="coerce")
+    crimes['DATE_OCC'] = pd.to_datetime(crimes['DATE_OCC'], errors='coerce')
+    crimes = crimes.dropna(subset=['DATE_OCC'])
 
     col1, col2 = st.columns(2)
     with col1:
-        crime_filter = st.multiselect("Filter Crime Types", options=crimes['Crm Cd Desc'].unique(), default="VEHICLE - STOLEN")
+        crime_filter = st.multiselect("Filter Crime Types", options=crimes['CRM_CD_DESC'].unique(), default="VEHICLE - STOLEN")
     with col2:
-        min_date = crimes['DATE OCC'].min().date()
-        max_date = crimes['DATE OCC'].max().date()
+        min_date = crimes['DATE_OCC'].min().date()
+        max_date = crimes['DATE_OCC'].max().date()
         date_filter = st.date_input("Filter by Date", [min_date, max_date])
 
     if crime_filter:
-        crimes = crimes[crimes['Crm Cd Desc'].isin(crime_filter)]
+        crimes = crimes[crimes['CRM_CD_DESC'].isin(crime_filter)]
     if len(date_filter) == 2:
-        crimes = crimes[(crimes['DATE OCC'].dt.date >= date_filter[0]) & (crimes['DATE OCC'].dt.date <= date_filter[1])]
+        crimes = crimes[(crimes['DATE_OCC'].dt.date >= date_filter[0]) & (crimes['DATE_OCC'].dt.date <= date_filter[1])]
 
-    df = crimes[['Crm Cd', 'Crm Cd Desc', 'LAT', 'LON', 'DATE OCC', 'LOCATION', 'Mocodes', 'Premis Desc']].head(500)
+    df = crimes[['CRM_CD', 'CRM_CD_DESC', 'LAT', 'LON', 'DATE_OCC', 'LOCATION', 'PREMIS_DESC']].head(500)
     if df.empty:
         st.info("No incidents found matching filters")
         return
@@ -289,21 +311,20 @@ def map_view_page():
     crime_map = folium.Map(location=map_center, zoom_start=12, tiles="OpenStreetMap")
 
     if view_option == "Marker Clusters":
-        crime_codes = df["Crm Cd"].unique()
+        crime_codes = df["CRM_CD"].unique()
         color_map = {code: f"#{random.randint(0, 0xFFFFFF):06x}" for code in crime_codes}
         marker_cluster = MarkerCluster().add_to(crime_map)
 
         for _, row in df.iterrows():
-            crime_code = row["Crm Cd"]
-            crime_desc = row["Crm Cd Desc"]
+            crime_code = row["CRM_CD"]
+            crime_desc = row["CRM_CD_DESC"]
             color = color_map[crime_code]
             popup_text = f"""
             <div style='font-size: 14px;'>
                 <strong>Crime:</strong> {crime_desc}<br>
-                <strong>Date:</strong> {row['DATE OCC'].strftime('%Y-%m-%d')}<br>
+                <strong>Date:</strong> {row['DATE_OCC'].strftime('%Y-%m-%d')}<br>
                 <strong>Location:</strong> {row['LOCATION']}<br>
-                <strong>MO Codes:</strong> {row['Mocodes']}<br>
-                <strong>Description:</strong> {row['Premis Desc']}
+                <strong>Description:</strong> {row['PREMIS_DESC']}
             </div>
             """
             folium.CircleMarker(
@@ -323,11 +344,10 @@ def map_view_page():
 
     st.subheader("Filtered Crime Incidents")
     st.dataframe(df.rename(columns={
-        'DATE OCC': 'Date',
-        'Crm Cd Desc': 'Crime Type',
+        'DATE_OCC': 'Date',
+        'CRM_CD_DESC': 'Crime Type',
         'LOCATION': 'Location',
-        'Mocodes': 'MO Codes',
-        'Premis Desc': 'Description'
+        'PREMIS_DESC': 'Description'
     }), use_container_width=True)
 
     # --- Download Option ---
@@ -344,7 +364,9 @@ def forecast_page():
     st.title("📈 Crime Forecasting")
 
     crimes = load_crime_data()
-    crimes['DATE OCC'] = pd.to_datetime(crimes['DATE OCC'], errors='coerce')
+    crimes["LAT"] = pd.to_numeric(crimes["LAT"], errors="coerce")
+    crimes["LON"] = pd.to_numeric(crimes["LON"], errors="coerce")
+    crimes['DATE_OCC'] = pd.to_datetime(crimes['DATE_OCC'], errors='coerce')
 
     try:
         forecast_month = datetime.today().replace(day=1) + relativedelta(months=1)
@@ -352,14 +374,17 @@ def forecast_page():
 
         st.markdown(f"#### Forecasting for: {forecast_label}")
 
-        crimes['DATE OCC'] = pd.to_datetime(crimes['DATE OCC'], errors='coerce')
+        crimes['DATE_OCC'] = pd.to_datetime(crimes['DATE_OCC'], errors='coerce')
         crime_forecasts = {}
         forecast_latlon = []
-        recent_months = crimes[crimes['DATE OCC'] >= (datetime.today() - pd.DateOffset(months=6))]
+        #recent_months = crimes[crimes['DATE_OCC'] >= (datetime.today() - pd.DateOffset(months=6))]
+        max_date = crimes['DATE_OCC'].max()
+        cutoff_date = max_date - pd.DateOffset(months=6)
+        recent_months = crimes[crimes['DATE_OCC'] >= cutoff_date]
 
-        for crime_type in crimes['Crm Cd Desc'].unique():
-            df_crime = crimes[crimes['Crm Cd Desc'] == crime_type]
-            monthly = df_crime.set_index('DATE OCC').resample('M').size().reset_index()
+        for crime_type in crimes['CRM_CD_DESC'].unique():
+            df_crime = crimes[crimes['CRM_CD_DESC'] == crime_type]
+            monthly = df_crime.set_index('DATE_OCC').resample('M').size().reset_index()
             if len(monthly) >= 2:
                 monthly.columns = ['Date', 'Count']
                 monthly['Ordinal'] = monthly['Date'].map(datetime.toordinal)
@@ -367,7 +392,7 @@ def forecast_page():
                 predicted = model.predict([[forecast_month.toordinal()]])[0]
                 crime_forecasts[crime_type] = max(int(predicted), 0)
 
-                recent_crime = recent_months[recent_months['Crm Cd Desc'] == crime_type]
+                recent_crime = recent_months[recent_months['CRM_CD_DESC'] == crime_type]
                 if not recent_crime[['LAT', 'LON']].dropna().empty:
                     latlon = recent_crime[['LAT', 'LON']].dropna()[['LAT', 'LON']].values.tolist()
                     forecast_latlon.extend(latlon)
