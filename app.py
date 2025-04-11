@@ -13,8 +13,16 @@ import sqlite3
 
 # --- File Paths ---
 USERS_FILE = "users.csv"
-CRIMES_FILE = "/Users/sowmya/Documents/208/Data/Crime_Data_from_2020_to_Present.csv"
+CRIMES_FILE = "Crime_Data_from_2020_to_Present.csv"
 REPORT_FILE = "reports.csv"
+
+@st.cache_data
+def load_crime_data():
+    url = "https://drive.google.com/uc?id=1BzV1mVYq__H8cTieOY76Lvc3oWGL8HA_"
+    return pd.read_csv(url)
+
+# Use wherever needed
+crimes = load_crime_data()
 
 # Utility: create tables if not exist
 def init_db():
@@ -105,7 +113,7 @@ def categorize_crime(description):
 def homepage():
     st.title(f"Crime Dashboard - Welcome {st.session_state.user}")
 
-    crimes = pd.read_csv(CRIMES_FILE)
+    crimes = load_crime_data()
     crimes['DATE OCC'] = pd.to_datetime(crimes['DATE OCC'], errors='coerce')
     crimes['Category'] = crimes['Crm Cd Desc'].apply(categorize_crime)
 
@@ -253,8 +261,7 @@ def report_page():
 # --- Interactive Map View Page ---
 def map_view_page():
     st.header("Interactive Crime Map")
-
-    crimes = pd.read_csv(CRIMES_FILE).dropna(subset=['LAT', 'LON'])
+    crimes = load_crime_data().dropna(subset=['LAT', 'LON'])
     crimes['DATE OCC'] = pd.to_datetime(crimes['DATE OCC'], errors='coerce')
     crimes = crimes.dropna(subset=['DATE OCC'])
 
@@ -336,7 +343,7 @@ def map_view_page():
 def forecast_page():
     st.title("📈 Crime Forecasting")
 
-    crimes = pd.read_csv(CRIMES_FILE)
+    crimes = load_crime_data()
     crimes['DATE OCC'] = pd.to_datetime(crimes['DATE OCC'], errors='coerce')
 
     try:
