@@ -19,7 +19,7 @@ REPORT_FILE = "reports.csv"
 @st.cache_data
 def load_crime_data():
     url = "https://drive.google.com/uc?id=1BzV1mVYq__H8cTieOY76Lvc3oWGL8HA_"
-    return pd.read_csv(url)
+    return pd.read_csv(url, nrows=10000)
 
 # Use wherever needed
 crimes = load_crime_data()
