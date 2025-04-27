@@ -12,6 +12,7 @@ from sklearn.linear_model import LinearRegression
 from dateutil.relativedelta import relativedelta
 import sqlite3
 import requests
+import shutil
 
 # --- File Paths ---
 USERS_FILE = "users.csv"
