@@ -77,6 +77,14 @@ def init_db():
             message TEXT
         )""")
 
+    # --- Ensure admin user exists ---
+    with sqlite3.connect("users.db") as conn:
+        cursor = conn.execute("SELECT * FROM users WHERE username = 'admin'")
+        if cursor.fetchone() is None:
+            admin_password = hashlib.sha256("admin".encode()).hexdigest()
+            conn.execute("INSERT INTO users (username, password) VALUES (?, ?)", ("admin", admin_password))
+
+
 # --- Authentication Functions ---
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
@@ -426,6 +434,32 @@ def forecast_page():
     except Exception as e:
         st.warning("Forecast unavailable: " + str(e))
 
+def admin_page():
+    st.header("🛡️ Admin Panel")
+
+    st.subheader("Filed Crime Reports")
+    try:
+        with sqlite3.connect("reports.db") as conn:
+            reports = pd.read_sql_query("SELECT * FROM reports", conn)
+        st.dataframe(reports, use_container_width=True)
+
+        csv_reports = reports.to_csv(index=False).encode('utf-8')
+        st.download_button("Download Reports as CSV", data=csv_reports, file_name="reports.csv", mime="text/csv")
+    except Exception as e:
+        st.error(f"Error loading reports: {str(e)}")
+
+    st.subheader("Resident Feedback")
+    try:
+        with sqlite3.connect("feedback.db") as conn:
+            feedback = pd.read_sql_query("SELECT * FROM feedback", conn)
+        st.dataframe(feedback, use_container_width=True)
+
+        csv_feedback = feedback.to_csv(index=False).encode('utf-8')
+        st.download_button("Download Feedback as CSV", data=csv_feedback, file_name="feedback.csv", mime="text/csv")
+    except Exception as e:
+        st.error(f"Error loading feedback: {str(e)}")
+
+
 # --- Main Application ---
 def main():
     st.set_page_config(page_title="CrimeWatch", layout="wide")
@@ -535,7 +569,11 @@ def main():
         login_page()
     else:
         # --- Header Navigation ---
-        cols = st.columns([1.5, 1, 1, 1, 1, 1])
+        if st.session_state.user == "admin":
+            cols = st.columns([1.2, 1, 1, 1, 1, 1, 1])
+        else:
+            cols = st.columns([1.5, 1, 1, 1, 1, 1])
+            
         with cols[0]:
             st.markdown(f"### 👮 CrimeWatch")
         with cols[1]:
@@ -555,6 +593,11 @@ def main():
                 st.session_state.logged_in = False
                 st.session_state.page = "Dashboard"
                 st.rerun()
+        # NEW Admin Button:
+        if st.session_state.user == "admin":
+            with cols[6]:
+                if st.button("Admin Panel"):
+                    st.session_state.page = "Admin Panel"
 
         st.markdown("---")  # Divider below the navbar
 
@@ -567,6 +610,8 @@ def main():
             forecast_page()
         elif st.session_state.page == "File Report":
             report_page()
+        elif st.session_state.page == "Admin Panel":
+            admin_page()
 
 if __name__ == "__main__":
     main()
