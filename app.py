@@ -44,6 +44,14 @@ def load_crime_data(max_rows=150000):
 
 # Utility: create tables if not exist
 def init_db():
+    # Check if database files already exist
+    if not os.path.exists("users.db"):
+        shutil.copyfile("starter_db/users.db", "users.db")
+    if not os.path.exists("reports.db"):
+        shutil.copyfile("starter_db/reports.db", "reports.db")
+    if not os.path.exists("feedback.db"):
+        shutil.copyfile("starter_db/feedback.db", "feedback.db")
+        
     with sqlite3.connect("users.db") as conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
