@@ -218,23 +218,35 @@ def homepage():
     with col1:
         st.markdown("### Crime Type Distribution")
         crime_types = filtered_crimes['CRM_CD_DESC'].value_counts()
-        st.bar_chart(crime_types)
+        if not crime_types.empty:
+            st.bar_chart(crime_types)
+        else:
+            st.info("Choose an appropriate filter options to view this chart.")
 
     with col2:
         st.markdown("### Monthly Crime Trend")
         time_data = filtered_crimes.set_index('DATE_OCC').resample('M').size().rename("count")
-        st.area_chart(time_data)
+        if not time_data.empty:
+            st.area_chart(time_data)
+        else:
+            st.info("Choose an appropriate filter options to view this chart.")
 
     col3, col4 = st.columns(2)
     with col3:
         st.markdown("### Violent Crimes Trend")
         time_data_violent = filtered_crimes[filtered_crimes['Category'] == "Violent Crimes"].set_index('DATE_OCC').resample('ME').size().rename("count")
-        st.area_chart(time_data_violent)
+        if not time_data_violent.empty:
+            st.area_chart(time_data_violent)
+        else:
+            st.info("Choose an appropriate crime type in filter options to view this chart.")
 
     with col4:
         st.markdown("### Property Crimes Trend")
         time_data_property = filtered_crimes[filtered_crimes['Category'] == "Property Crimes"].set_index('DATE_OCC').resample('ME').size().rename("count")
-        st.area_chart(time_data_property)
+        if not time_data_property.empty:
+            st.area_chart(time_data_property)
+        else:
+            st.info("Choose an appropriate crime type in filter options to view this chart.")
 
     with st.expander("📢 Community Safety Tips"):
         st.markdown("""
