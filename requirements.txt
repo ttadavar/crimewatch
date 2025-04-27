@@ -4,4 +4,4 @@ folium
 streamlit-folium
 scikit-learn
 python-dateutil
-
+pytest-shutil

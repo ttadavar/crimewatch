@@ -12,6 +12,8 @@ from sklearn.linear_model import LinearRegression
 from dateutil.relativedelta import relativedelta
 import sqlite3
 import requests
+import shutil
+import numpy as np
 
 # --- File Paths ---
 USERS_FILE = "users.csv"
@@ -19,13 +21,26 @@ CRIMES_FILE = "Crime_Data_from_2020_to_Present.csv"
 REPORT_FILE = "reports.csv"
 
 @st.cache_data
-def load_crime_data(max_rows=150000):
+def load_crime_data(max_rows=200000):
     endpoint = "https://data.lacity.org/resource/2nrs-mtv8.json"
     limit = 50000
     dfs = []
 
+    # --- NEW: Set cutoff date dynamically ---
+    cutoff_reference_date = datetime.today() - relativedelta(months=3)
+    cutoff_date = (cutoff_reference_date - relativedelta(months=15)).strftime("%Y-%m-%dT00:00:00.000")
+
+    # --- NEW: Hardcoded cutoff dates because data is only up to Feb 2025 ---
+    start_date = "2024-01-01T00:00:00.000"  # 12 months ago
+    end_date = "2025-01-31T23:59:59.999"     # End of Jan 2025
+
+    where_clause = f"DATE_OCC >= '{start_date}' AND DATE_OCC <= '{end_date}'"
+
     for offset in range(0, max_rows, limit):
-        url = f"{endpoint}?$limit={limit}&$offset={offset}"
+        url = (
+            f"{endpoint}?$limit={limit}&$offset={offset}"
+            f"&$where={where_clause}"
+        )
         response = requests.get(url)
         if response.status_code != 200:
             break  # Exit on error or no more data
@@ -44,6 +59,14 @@ def load_crime_data(max_rows=150000):
 
 # Utility: create tables if not exist
 def init_db():
+    # Check if database files already exist
+    if not os.path.exists("users.db"):
+        shutil.copyfile("starter_db/users.db", "users.db")
+    if not os.path.exists("reports.db"):
+        shutil.copyfile("starter_db/reports.db", "reports.db")
+    if not os.path.exists("feedback.db"):
+        shutil.copyfile("starter_db/feedback.db", "feedback.db")
+        
     with sqlite3.connect("users.db") as conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
@@ -67,6 +90,14 @@ def init_db():
             timestamp TEXT,
             message TEXT
         )""")
+
+    # --- Ensure admin user exists ---
+    with sqlite3.connect("users.db") as conn:
+        cursor = conn.execute("SELECT * FROM users WHERE username = 'admin'")
+        if cursor.fetchone() is None:
+            admin_password = hashlib.sha256("admin".encode()).hexdigest()
+            conn.execute("INSERT INTO users (username, password) VALUES (?, ?)", ("admin", admin_password))
+
 
 # --- Authentication Functions ---
 def hash_password(password):
@@ -363,59 +394,158 @@ def map_view_page():
 def forecast_page():
     st.title("📈 Crime Forecasting")
 
-    crimes = load_crime_data()
-    crimes["LAT"] = pd.to_numeric(crimes["LAT"], errors="coerce")
-    crimes["LON"] = pd.to_numeric(crimes["LON"], errors="coerce")
-    crimes['DATE_OCC'] = pd.to_datetime(crimes['DATE_OCC'], errors='coerce')
-
     try:
-        forecast_month = datetime.today().replace(day=1) + relativedelta(months=1)
+        # --- 1. Load and Prepare Crime Data ---
+        crimes = load_crime_data()
+        crimes["LAT"] = pd.to_numeric(crimes["LAT"], errors="coerce")
+        crimes["LON"] = pd.to_numeric(crimes["LON"], errors="coerce")
+        crimes['DATE_OCC'] = pd.to_datetime(crimes['DATE_OCC'], errors='coerce')
+        crimes = crimes.dropna(subset=["LAT", "LON"])
+
+        # --- 2. Create Zones (rounded 0.1 degrees) ---
+        crimes["LAT_ZONE"] = crimes["LAT"].apply(lambda x: round(x, 1))
+        crimes["LON_ZONE"] = crimes["LON"].apply(lambda x: round(x, 1))
+        crimes["ZONE_ID"] = crimes["LAT_ZONE"].astype(str) + "_" + crimes["LON_ZONE"].astype(str)
+
+        # --- 3. Create Month Field ---
+        crimes["Month"] = crimes["DATE_OCC"].dt.to_period("M")
+
+        # --- 4. Set Forecast Target Month ---
+        #max_date = crimes['DATE_OCC'].max()
+        #forecast_month = max_date.replace(day=1) + relativedelta(months=1)
+        forecast_month = datetime.today() + relativedelta(months=1)
         forecast_label = forecast_month.strftime("%B %Y")
 
-        st.markdown(f"#### Forecasting for: {forecast_label}")
+        st.markdown(f"#### Forecasting for {forecast_label}")
+        # ========== ZONE FORECASTING (only for Map internally) ==========
 
-        crimes['DATE_OCC'] = pd.to_datetime(crimes['DATE_OCC'], errors='coerce')
-        crime_forecasts = {}
-        forecast_latlon = []
-        #recent_months = crimes[crimes['DATE_OCC'] >= (datetime.today() - pd.DateOffset(months=6))]
-        max_date = crimes['DATE_OCC'].max()
-        cutoff_date = max_date - pd.DateOffset(months=6)
-        recent_months = crimes[crimes['DATE_OCC'] >= cutoff_date]
+        zone_month_crimes = crimes.groupby(["ZONE_ID", "Month"]).size().reset_index(name="Crime_Count")
 
-        for crime_type in crimes['CRM_CD_DESC'].unique():
-            df_crime = crimes[crimes['CRM_CD_DESC'] == crime_type]
-            monthly = df_crime.set_index('DATE_OCC').resample('M').size().reset_index()
-            if len(monthly) >= 2:
-                monthly.columns = ['Date', 'Count']
-                monthly['Ordinal'] = monthly['Date'].map(datetime.toordinal)
-                model = LinearRegression().fit(monthly[['Ordinal']], monthly['Count'])
-                predicted = model.predict([[forecast_month.toordinal()]])[0]
-                crime_forecasts[crime_type] = max(int(predicted), 0)
+        forecast_zone_counts = {}
 
-                recent_crime = recent_months[recent_months['CRM_CD_DESC'] == crime_type]
-                if not recent_crime[['LAT', 'LON']].dropna().empty:
-                    latlon = recent_crime[['LAT', 'LON']].dropna()[['LAT', 'LON']].values.tolist()
-                    forecast_latlon.extend(latlon)
+        for zone in zone_month_crimes["ZONE_ID"].unique():
+            zone_data = zone_month_crimes[zone_month_crimes["ZONE_ID"] == zone]
+            zone_data = zone_data.sort_values("Month")
+            zone_data["Ordinal"] = zone_data["Month"].apply(lambda x: x.start_time.toordinal())
 
-        if crime_forecasts:
-            total_predicted = sum(crime_forecasts.values())
-            st.metric("Total Predicted Crimes", total_predicted)
-            forecast_df = pd.DataFrame(list(crime_forecasts.items()), columns=["Crime Type", f"Predicted ({forecast_label})"])
-            st.dataframe(forecast_df)
+            X = zone_data[["Ordinal"]]
+            y = zone_data["Crime_Count"]
 
-            if forecast_latlon:
-                st.markdown("### 🔥 Forecast Heatmap of Expected Crime Locations")
-                center = [sum([x[0] for x in forecast_latlon]) / len(forecast_latlon),
-                          sum([x[1] for x in forecast_latlon]) / len(forecast_latlon)]
-                forecast_map = folium.Map(location=center, zoom_start=11, tiles="OpenStreetMap")
-                HeatMap(forecast_latlon, radius=12, blur=8, max_zoom=13).add_to(forecast_map)
-                folium_static(forecast_map, width=1800, height=800)
-            else:
-                st.info("No location data available for forecast visualization.")
+            if len(X) >= 2:
+                model = LinearRegression().fit(X, y)
+                next_month = (zone_data["Month"].max().start_time + relativedelta(months=1)).toordinal()
+                predicted_count = model.predict(np.array([[next_month]]))[0]
+                forecast_zone_counts[zone] = max(int(predicted_count), 0)
+
+        # Build map if any zones predicted
+        if forecast_zone_counts:
+            forecast_zone_df = pd.DataFrame(
+                list(forecast_zone_counts.items()),
+                columns=["Zone_ID", "Predicted_Crimes"]
+            )
+            forecast_zone_df[["Latitude", "Longitude"]] = forecast_zone_df["Zone_ID"].str.split("_", expand=True)
+            forecast_zone_df["Latitude"] = forecast_zone_df["Latitude"].astype(float)
+            forecast_zone_df["Longitude"] = forecast_zone_df["Longitude"].astype(float)
+
+            # --- Map ---
+            st.subheader("🗺️ Forecasted Crime Risk Map")
+
+            forecast_map = folium.Map(location=[34.05, -118.25], zoom_start=11, tiles="OpenStreetMap")
+            max_crimes = forecast_zone_df["Predicted_Crimes"].max()
+
+            for _, row in forecast_zone_df.iterrows():
+                lat = row["Latitude"]
+                lon = row["Longitude"]
+                predicted_crimes = row["Predicted_Crimes"]
+
+                if predicted_crimes > 0:
+                    square = [
+                        [lat, lon],
+                        [lat + 0.1, lon],
+                        [lat + 0.1, lon + 0.1],
+                        [lat, lon + 0.1],
+                        [lat, lon]
+                    ]
+
+                    normalized_value = predicted_crimes / max_crimes
+                    red = int(255 * normalized_value)
+                    color = f"#{red:02x}0000"
+
+                    folium.Polygon(
+                        locations=square,
+                        color=None,
+                        fill=True,
+                        fill_color=color,
+                        fill_opacity=0.5,
+                        popup=folium.Popup(f"Predicted Crimes: {predicted_crimes}", max_width=250)
+                    ).add_to(forecast_map)
+
+            folium_static(forecast_map, width=1800, height=800)
+
         else:
-            st.info("Not enough data to generate forecasts by crime type.")
+            st.info("Not enough data to generate forecasts by zone.")
+
+        # ========== CRIME TYPE FORECASTING (for Table only) ==========
+
+        st.subheader("📋 Predicted Crimes by Type (City-wide)")
+
+        crime_type_month = crimes.groupby(["Month", "CRM_CD_DESC"]).size().reset_index(name="Crime_Count")
+
+        crime_type_forecasts = {}
+
+        for crime_type in crime_type_month["CRM_CD_DESC"].unique():
+            crime_data = crime_type_month[crime_type_month["CRM_CD_DESC"] == crime_type]
+            crime_data = crime_data.sort_values("Month")
+            crime_data["Ordinal"] = crime_data["Month"].apply(lambda x: x.start_time.toordinal())
+
+            X = crime_data[["Ordinal"]]
+            y = crime_data["Crime_Count"]
+
+            if len(X) >= 2:
+                model = LinearRegression().fit(X, y)
+                next_month = (crime_data["Month"].max().start_time + relativedelta(months=1)).toordinal()
+                predicted_count = model.predict(np.array([[next_month]]))[0]
+                crime_type_forecasts[crime_type] = max(int(predicted_count), 0)
+
+        crime_type_forecast_df = pd.DataFrame(
+            list(crime_type_forecasts.items()),
+            columns=["Crime Type", f"Predicted ({forecast_label})"]
+        )
+
+        crime_type_forecast_df = crime_type_forecast_df[
+            crime_type_forecast_df[f"Predicted ({forecast_label})"] > 0
+        ].sort_values(f"Predicted ({forecast_label})", ascending=False).reset_index(drop=True)
+
+        st.dataframe(crime_type_forecast_df, use_container_width=True)
+
     except Exception as e:
         st.warning("Forecast unavailable: " + str(e))
+
+def admin_page():
+    st.header("🛡️ Admin Panel")
+
+    st.subheader("Filed Crime Reports")
+    try:
+        with sqlite3.connect("reports.db") as conn:
+            reports = pd.read_sql_query("SELECT * FROM reports", conn)
+        st.dataframe(reports, use_container_width=True)
+
+        csv_reports = reports.to_csv(index=False).encode('utf-8')
+        st.download_button("Download Reports as CSV", data=csv_reports, file_name="reports.csv", mime="text/csv")
+    except Exception as e:
+        st.error(f"Error loading reports: {str(e)}")
+
+    st.subheader("Resident Feedback")
+    try:
+        with sqlite3.connect("feedback.db") as conn:
+            feedback = pd.read_sql_query("SELECT * FROM feedback", conn)
+        st.dataframe(feedback, use_container_width=True)
+
+        csv_feedback = feedback.to_csv(index=False).encode('utf-8')
+        st.download_button("Download Feedback as CSV", data=csv_feedback, file_name="feedback.csv", mime="text/csv")
+    except Exception as e:
+        st.error(f"Error loading feedback: {str(e)}")
+
 
 # --- Main Application ---
 def main():
@@ -526,7 +656,11 @@ def main():
         login_page()
     else:
         # --- Header Navigation ---
-        cols = st.columns([1.5, 1, 1, 1, 1, 1])
+        if st.session_state.user == "admin":
+            cols = st.columns([1.2, 1, 1, 1, 1, 1, 1])
+        else:
+            cols = st.columns([1.5, 1, 1, 1, 1, 1])
+            
         with cols[0]:
             st.markdown(f"### 👮 CrimeWatch")
         with cols[1]:
@@ -546,6 +680,11 @@ def main():
                 st.session_state.logged_in = False
                 st.session_state.page = "Dashboard"
                 st.rerun()
+        # NEW Admin Button:
+        if st.session_state.user == "admin":
+            with cols[6]:
+                if st.button("Admin Panel"):
+                    st.session_state.page = "Admin Panel"
 
         st.markdown("---")  # Divider below the navbar
 
@@ -558,6 +697,8 @@ def main():
             forecast_page()
         elif st.session_state.page == "File Report":
             report_page()
+        elif st.session_state.page == "Admin Panel":
+            admin_page()
 
 if __name__ == "__main__":
     main()
