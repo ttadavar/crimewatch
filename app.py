@@ -584,8 +584,10 @@ def forecast_page():
             forecast_zone_df["Latitude"] = forecast_zone_df["Latitude"].astype(float)
             forecast_zone_df["Longitude"] = forecast_zone_df["Longitude"].astype(float)
 
+            total_zone_predictions = forecast_zone_df["Predicted_Crimes"].sum()
             # --- Map ---
-            st.subheader("🗺️ Forecasted Crime Risk Map")
+            st.subheader(f"🗺️ Forecasted Crime Risk Map – Total Forecast: {int(total_zone_predictions):,}")
+            #st.subheader("🗺️ Forecasted Crime Risk Map")
 
             forecast_map = folium.Map(location=[34.05, -118.25], zoom_start=11, tiles="OpenStreetMap")
             max_crimes = forecast_zone_df["Predicted_Crimes"].max()
