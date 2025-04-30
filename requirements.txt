@@ -59,7 +59,7 @@ setuptools==69.2.0
 six==1.16.0
 smmap==5.0.1
 stack-data==0.6.3
-streamlit==1.44.1
+streamlit==1.33.0
 streamlit_folium==0.24.0
 tenacity==8.2.3
 threadpoolctl==3.6.0
