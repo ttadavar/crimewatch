@@ -22,7 +22,7 @@ CRIMES_FILE = "Crime_Data_from_2020_to_Present.csv"
 REPORT_FILE = "reports.csv"
 
 @st.cache_data
-def load_crime_data(max_rows=200000):
+def load_crime_data(max_rows=500000):
     endpoint = "https://data.lacity.org/resource/2nrs-mtv8.json"
     limit = 50000
     dfs = []
@@ -32,7 +32,7 @@ def load_crime_data(max_rows=200000):
     cutoff_date = (cutoff_reference_date - relativedelta(months=15)).strftime("%Y-%m-%dT00:00:00.000")
 
     # --- NEW: Hardcoded cutoff dates because data is only up to Feb 2025 ---
-    start_date = "2024-01-01T00:00:00.000"  # 12 months ago
+    start_date = "2023-01-01T00:00:00.000"  # 12 months ago
     end_date = "2025-01-31T23:59:59.999"     # End of Jan 2025
 
     where_clause = f"DATE_OCC >= '{start_date}' AND DATE_OCC <= '{end_date}'"
