@@ -171,7 +171,7 @@ def homepage():
 
     min_date = crimes['DATE_OCC'].min().date() if not crimes.empty else datetime.today().date()
     max_date = crimes['DATE_OCC'].max().date() if not crimes.empty else datetime.today().date()
-    col_filter1, col_filter2 = st.columns([2, 3])
+    col_filter1, col_filter2 = st.columns([2, 2])
     with col_filter1:
         date_range = st.date_input("Select Date Range", [min_date, max_date])
     with col_filter2:
