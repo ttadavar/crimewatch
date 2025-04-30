@@ -14,6 +14,7 @@ import sqlite3
 import requests
 import shutil
 import numpy as np
+import altair as alt
 
 # --- File Paths ---
 USERS_FILE = "users.csv"
@@ -193,35 +194,98 @@ def homepage():
         clearance_rate = filtered_crimes['STATUS_DESC'].str.contains('Arrest', na=False).mean() * 100
         st.metric("Arrest Rate", f"{clearance_rate:.1f}%")
 
-    st.markdown("### Top 5 Reported Crime Types")
-    top_crimes = filtered_crimes['CRM_CD_DESC'].value_counts().head(5)
-    st.table(top_crimes.reset_index().rename(columns={'index': 'Crime Type', 'CRM_CD_DESC': 'Reports'}))
+    #st.markdown("### Top 5 Reported Crime Types")
+    #top_crimes = filtered_crimes['CRM_CD_DESC'].value_counts().head(5)
+    #st.table(top_crimes.reset_index().rename(columns={'index': 'Crime Type', 'CRM_CD_DESC': 'Reports'}))
 
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("### Crimes by Day of Week")
-        day_counts = filtered_crimes['DATE_OCC'].dt.day_name().value_counts().reindex([
-            "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"
-        ])
-        st.bar_chart(day_counts)
+
+        # Extract and count
+        day_series = filtered_crimes['DATE_OCC'].dt.day_name()
+        all_days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+
+        # Count occurrences with guaranteed order
+        day_counts = day_series.value_counts().reindex(all_days, fill_value=0)
+        df_day = pd.DataFrame({
+            "Day": pd.Categorical(day_counts.index, categories=all_days, ordered=True),
+            "Count": day_counts.values
+        })
+
+        # Identify the max
+        max_day = df_day.loc[df_day["Count"].idxmax(), "Day"]
+        df_day["Color"] = df_day["Day"].apply(lambda x: "red" if x == max_day else "steelblue")
+
+        # Altair chart with fixed order
+        chart = alt.Chart(df_day).mark_bar().encode(
+            x=alt.X("Day:N", sort=all_days, title="Day of Week"),
+            y=alt.Y("Count:Q", title="Number of Crimes"),
+            color=alt.Color("Color:N", scale=None, legend=None)
+        ).properties(height=400)
+
+        st.altair_chart(chart, use_container_width=True)
 
     with col2:
         st.markdown("### Crime Activity by Hour of Day")
+
+        # Extract hour
         filtered_crimes['Hour'] = pd.to_numeric(
-    filtered_crimes['TIME_OCC'].fillna(0).astype(int).astype(str).str.zfill(4).str[:2],
-    errors='coerce'
-).fillna(0).astype(int)
+            filtered_crimes['TIME_OCC'].fillna(0).astype(int).astype(str).str.zfill(4).str[:2],
+            errors='coerce'
+        ).fillna(0).astype(int)
+
         hour_counts = filtered_crimes['Hour'].value_counts().sort_index()
-        st.line_chart(hour_counts)
+        df_hour = pd.DataFrame({
+            "Hour": hour_counts.index,
+            "Count": hour_counts.values
+        })
+
+        max_hour = df_hour.loc[df_hour["Count"].idxmax(), "Hour"]
+
+        # Add highlight flag
+        df_hour["Color"] = df_hour["Hour"].apply(lambda x: "red" if x == max_hour else "steelblue")
+
+        # Line + point chart
+        chart = alt.Chart(df_hour).mark_line().encode(
+            x=alt.X("Hour:O", title="Hour of Day"),
+            y=alt.Y("Count:Q", title="Number of Crimes"),
+        ) + alt.Chart(df_hour).mark_circle(size=60).encode(
+            x="Hour:O",
+            y="Count:Q",
+            color=alt.Color("Color:N", scale=None, legend=None)
+        )
+
+        st.altair_chart(chart, use_container_width=True)
 
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("### Crime Type Distribution")
+
         crime_types = filtered_crimes['CRM_CD_DESC'].value_counts()
+
         if not crime_types.empty:
-            st.bar_chart(crime_types)
+            df_crime_type = pd.DataFrame({
+                "Crime Type": crime_types.index,
+                "Count": crime_types.values
+            })
+
+            # Optional: highlight top crime type in red
+            top_crime = df_crime_type.loc[df_crime_type["Count"].idxmax(), "Crime Type"]
+            df_crime_type["Color"] = df_crime_type["Crime Type"].apply(
+                lambda x: "red" if x == top_crime else "steelblue"
+            )
+
+            chart = alt.Chart(df_crime_type.head(10)).mark_bar().encode(
+                x=alt.X("Count:Q", title="Number of Crimes"),
+                y=alt.Y("Crime Type:N", sort="-x", title=None, axis=alt.Axis(labelLimit=300, labelFontSize=12)),
+                color=alt.Color("Color:N", scale=None, legend=None),
+                tooltip=["Crime Type", "Count"]
+            ).properties(height=400)
+
+            st.altair_chart(chart, use_container_width=True)
         else:
-            st.info("Choose an appropriate filter options to view this chart.")
+            st.info("Choose appropriate filter options to view this chart.")
 
     with col2:
         st.markdown("### Monthly Crime Trend")
