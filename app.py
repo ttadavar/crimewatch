@@ -812,16 +812,18 @@ def main():
         with cols[4]:
             if st.button("File Report"):
                 st.session_state.page = "File Report"
-        with cols[5]:
+         # Admin Panel (only for admin)
+        if st.session_state.user == "admin":
+            with cols[5]:
+                if st.button("Admin Panel"):
+                    st.session_state.page = "Admin Panel"
+
+        # Logout button always last
+        with cols[-1]:
             if st.button("Logout"):
                 st.session_state.logged_in = False
                 st.session_state.page = "Dashboard"
                 st.rerun()
-        # NEW Admin Button:
-        if st.session_state.user == "admin":
-            with cols[6]:
-                if st.button("Admin Panel"):
-                    st.session_state.page = "Admin Panel"
 
         st.markdown("---")  # Divider below the navbar
 
