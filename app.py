@@ -254,7 +254,7 @@ def homepage():
             x="Hour:O",
             y="Count:Q",
             color=alt.Color("Color:N", scale=None, legend=None)
-        )
+        ).properties(height=400)
 
         st.altair_chart(chart, use_container_width=True)
 
@@ -289,26 +289,87 @@ def homepage():
 
     with col2:
         st.markdown("### Monthly Crime Trend")
-        time_data = filtered_crimes.set_index('DATE_OCC').resample('M').size().rename("count")
+
+        time_data = filtered_crimes.set_index('DATE_OCC').resample('ME').size().rename("Count")
+
         if not time_data.empty:
-            st.area_chart(time_data)
+            df_trend = time_data.reset_index()
+            df_trend.columns = ["Date", "Count"]
+
+            chart = alt.Chart(df_trend).mark_area(
+                line={'color': '#1f77b4'},
+                color=alt.Gradient(
+                    gradient='linear',
+                    stops=[{"offset": 0, "color": "#1f77b4"}, {"offset": 1, "color": "#ffffff00"}],
+                    x1=1, x2=1, y1=1, y2=0
+                )
+            ).encode(
+                x=alt.X("Date:T", title="Month"),
+                y=alt.Y("Count:Q", title="Crime Count")
+            ).properties(height=400)
+
+            st.altair_chart(chart, use_container_width=True)
         else:
             st.info("Choose an appropriate filter options to view this chart.")
 
     col3, col4 = st.columns(2)
     with col3:
         st.markdown("### Violent Crimes Trend")
-        time_data_violent = filtered_crimes[filtered_crimes['Category'] == "Violent Crimes"].set_index('DATE_OCC').resample('ME').size().rename("count")
+        time_data_violent = (
+            filtered_crimes[filtered_crimes['Category'] == "Violent Crimes"]
+            .set_index('DATE_OCC')
+            .resample('ME')
+            .size()
+            .rename("Count")
+        )
+
         if not time_data_violent.empty:
-            st.area_chart(time_data_violent)
+            df_violent = time_data_violent.reset_index()
+            df_violent.columns = ["Date", "Count"]
+
+            chart_violent = alt.Chart(df_violent).mark_area(
+                line={'color': '#d62728'},
+                color=alt.Gradient(
+                    gradient='linear',
+                    stops=[{"offset": 0, "color": "#d62728"}, {"offset": 1, "color": "#ffffff00"}],
+                    x1=1, x2=1, y1=1, y2=0
+                )
+            ).encode(
+                x=alt.X("Date:T", title="Month"),
+                y=alt.Y("Count:Q", title="Number of Violent Crimes")
+            ).properties(height=400)
+
+            st.altair_chart(chart_violent, use_container_width=True)
         else:
             st.info("Choose an appropriate crime type in filter options to view this chart.")
 
     with col4:
         st.markdown("### Property Crimes Trend")
-        time_data_property = filtered_crimes[filtered_crimes['Category'] == "Property Crimes"].set_index('DATE_OCC').resample('ME').size().rename("count")
+        time_data_property = (
+            filtered_crimes[filtered_crimes['Category'] == "Property Crimes"]
+            .set_index('DATE_OCC')
+            .resample('ME')
+            .size()
+            .rename("Count")
+        )
+
         if not time_data_property.empty:
-            st.area_chart(time_data_property)
+            df_property = time_data_property.reset_index()
+            df_property.columns = ["Date", "Count"]
+
+            chart_property = alt.Chart(df_property).mark_area(
+                line={'color': '#1f77b4'},
+                color=alt.Gradient(
+                    gradient='linear',
+                    stops=[{"offset": 0, "color": "#1f77b4"}, {"offset": 1, "color": "#ffffff00"}],
+                    x1=1, x2=1, y1=1, y2=0
+                )
+            ).encode(
+                x=alt.X("Date:T", title="Month"),
+                y=alt.Y("Count:Q", title="Number of Property Crimes")
+            ).properties(height=400)
+
+            st.altair_chart(chart_property, use_container_width=True)
         else:
             st.info("Choose an appropriate crime type in filter options to view this chart.")
 
